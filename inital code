@@ -27,9 +27,11 @@ Y = "-.--"
 Z = "--.."
 #end define
 
-##structure hand muscle signal -> movement direction -> dot/dash classification->morse decoder -> speech output
+##structure hand muscle signal -> movement direction -> dot/dash classification-> morse sequence -> de text on screen -> speech output
 
 Read biosensor signal
+
+define morsesequence var 
 
 Determine if signal is 
   short movement/spasm
@@ -38,5 +40,34 @@ Determine if signal is
   long pause
 
 Convert signal to morse symbol based off dictionary
+Add morse symbol to morsesequence var
 
-Defien 
+IF sensor detects short movement/spasm
+  Add "." to morsesequence var
+IF sensor detects long hand movement/spasm 
+  Add "-" to morsesequence var
+IF sensor detects short pause
+  Add space to indicate next letter
+IF sensor detects long pause
+  Add "/" to indicate new word
+
+# morse to text on screen 
+
+Function DecodeMorse(morsesequence)
+  #split morsesequence into letters
+  For each moreseletter in sequence 
+    Look up morse letter in sequence
+      If match found
+        Add corresponding letter to translatetext
+  return translatetext
+end function
+
+#text to speech
+
+Function Speaktext(translatetext)
+  send translatetext to speech engine 
+  speak translate text outloud
+end function 
+
+
+
