@@ -1,0 +1,42 @@
+#define morsedictionary as
+A = ".-"
+B = "-..."
+C = "-.-."
+D = "-.."
+E = "."
+F = "..-."
+G = "..-."
+H = "...."
+I = ".."
+J = ".---"
+K = "-.-"
+L = ".-.."
+M = "--"
+N = "-."
+O = "---"
+P = ".--."
+Q = "--.-"
+R = ".-."
+S = "..."
+T = "-"
+U = "..-"
+V = "...-"
+W = ".--"
+X = "-..-"
+Y = "-.--"
+Z = "--.."
+#end define
+
+##structure hand muscle signal -> movement direction -> dot/dash classification->morse decoder -> speech output
+
+Read biosensor signal
+
+Determine if signal is 
+  short movement/spasm
+  long movement/spasm
+  short pause
+  long pause
+
+Convert signal to morse symbol based off dictionary
+
+Defien 
