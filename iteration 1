@@ -1,0 +1,78 @@
+input = [
+    "short", "short", "short", "short", "short_pause", 
+    "short", "short", "short_pause", 
+    "long_pause", 
+    "long", "short_pause",
+    "short", "short_pause", 
+    "short", "short", "short", "short_pause",
+    "long"
+    ]
+# HI TEST is message hard coded rn
+
+#replace input with 
+
+#creating morse code dictionary
+MORSE_DICTIONARY = {
+    ".-": "A",
+    "-...": "B",
+    "-.-.": "C",
+    "-..": "D",
+    ".": "E",
+    "..-.": "F",
+    "--.": "G",
+    "....": "H",
+    "..": "I",
+    ".---": "J",
+    "-.-": "K",
+    ".-..": "L",
+    "--": "M",
+    "-.": "N",
+    "---": "O",
+    ".--.": "P",
+    "--.-": "Q",
+    ".-.": "R",
+    "...": "S",
+    "-": "T",
+    "..-": "U",
+    "...-": "V",
+    ".--": "W",
+    "-..-": "X",
+    "-.--": "Y",
+    "--..": "Z"
+}
+#print(MORSE_DICTIONARY)
+
+morse_sequence = ""
+
+# Converting signals from sensors into morse symbols
+for signal in input:
+    if signal == "short":
+        morse_sequence += "."
+    elif signal == "long":
+        morse_sequence += "-"
+    elif signal == "short_pause":
+        morse_sequence += " "
+    elif signal == "long_pause":
+        morse_sequence += " / "
+
+print("Morse sequence:" + morse_sequence)
+
+#Morse -> text 
+
+def decode_morse(morse_sequence):
+    translate_text = ""
+    
+    words = morse_sequence.split(" / ")
+    for word in words:
+        letters = word.split()
+        
+        for morse_letter in letters:
+            if morse_letter in MORSE_DICTIONARY:
+                translate_text += MORSE_DICTIONARY[morse_letter]
+                
+        translate_text += " "
+        
+    return translate_text.strip()
+    
+englishtranslatedtext = decode_morse(morse_sequence)
+print("text output:", englishtranslatedtext)
