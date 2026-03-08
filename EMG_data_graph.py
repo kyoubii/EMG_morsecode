@@ -4,10 +4,10 @@ from scipy.signal import butter, filtfilt
 
 file_path = r"C:\Users\foxki\Documents\OpenBCI_GUI\Recordings\OpenBCISession_2026-03-07_16-13-26\BrainFlow-RAW_2026-03-07_16-13-26_6.csv"
 
-# Load raw lines
+# Read raw lines
 raw = pd.read_csv(file_path, skiprows=1, header=None)
 
-# Remove quotes and split tab-separated values
+# Remove quotes/take in string as float number
 data = raw[0].str.replace('"', '').str.split('\t', expand=True)
 data = data.astype(float)
 
@@ -22,6 +22,7 @@ low = 20
 high = 450
 b, a = butter(4, [low/(fs/2), high/(fs/2)], btype='band')
 
+# Assign filtered values to variables
 left_filtered = filtfilt(b, a, left_raw)
 right_filtered = filtfilt(b, a, right_raw)
 
@@ -42,4 +43,5 @@ plt.legend()
 
 plt.xlabel("Time")
 plt.tight_layout()
+
 plt.show()
