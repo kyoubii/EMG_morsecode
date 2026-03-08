@@ -1,0 +1,54 @@
+# Simple threshold-based spike detector
+THRESHOLD = 0.5  # value above which signal is a "spike"
+
+previous_state = False  # False = baseline, True = in spike
+output_fired = False
+
+for sample in signal:
+    current_state = sample > THRESHOLD
+    
+    # Rising edge: was baseline, now spike
+    if current_state and not previous_state:
+        fire_output()          # ← triggers ONCE per spike
+    
+    previous_state = current_state
+```
+
+### The State Machine (conceptually)
+```
+BASELINE ──(signal > threshold)──► SPIKE  → fire output
+SPIKE    ──(signal ≤ threshold)──► BASELINE
+BASELINE ──(signal ≤ threshold)──► BASELINE (no output)
+SPIKE    ──(signal > threshold)──► SPIKE   (no output)
+
+import time
+
+THRESHOLD = 0.5
+MIN_SPIKE_GAP = 0.1  # seconds — ignore re-triggers within this window
+
+last_spike_time = -999
+in_spike = False
+
+for timestamp, sample in signal:
+    above = sample > THRESHOLD
+    
+    if above and not in_spike:
+        time_since_last = timestamp - last_spike_time
+        if time_since_last > MIN_SPIKE_GAP:
+            fire_output()
+            last_spike_time = timestamp
+    
+    in_spike = above  # update state
+
+#Otherwise:
+# THRESHOLD_HIGH = 0.6   # must exceed this to enter spike
+# THRESHOLD_LOW  = 0.3   # must drop below this to exit spike
+
+# in_spike = False
+
+# for sample in signal:
+    # if not in_spike and sample > THRESHOLD_HIGH:
+       #  in_spike = True
+      #   fire_output()              # rising edge only
+#     elif in_spike and sample < THRESHOLD_LOW:
+     #    in_spike = False           # reset, ready for next spike
