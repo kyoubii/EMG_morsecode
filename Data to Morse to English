@@ -1,0 +1,241 @@
+"""
+Morse Code Decoder from BrainFlow EEG Data
+===========================================
+Reads a BrainFlow CSV file and decodes morse code from EEG activity spikes.
+
+Data layout (0-indexed columns):
+  Column  1  (index 1)  → Dot channel  (mV)
+  Column  4  (index 4)  → Dash channel (mV)
+  Column 13  (index 13) → Timestamp    (Unix epoch seconds)
+
+Algorithm overview:
+  1. Load the three relevant columns.
+  2. Detect sustained bursts above the 2500 mV threshold on each channel.
+     A "burst" = a contiguous region where |signal| > threshold.
+     Nearby burst fragments within MERGE_GAP seconds are merged together
+     to prevent a single large spike from spawning multiple triggers.
+  3. Short bursts < MIN_BURST_DURATION are discarded as noise.
+  4. When both channels are active at the same time (overlap), the channel
+     with the higher mean amplitude wins.
+  5. Inter-symbol gaps are used to group symbols into letters and words:
+       gap < LETTER_GAP  → same letter
+       gap ≥ LETTER_GAP  → new letter
+       gap ≥ WORD_GAP    → new word
+  6. Each group of symbols is looked up in the standard morse code table.
+"""
+
+import sys
+import numpy as np
+
+# ── Tunable parameters ────────────────────────────────────────────────────────
+THRESHOLD        = 2500   # mV – spikes above this magnitude count as a trigger
+MERGE_GAP        = 0.08   # s  – burst fragments closer than this are merged
+MIN_BURST_DUR    = 0.10   # s  – bursts shorter than this are treated as noise
+LETTER_GAP       = 0.50   # s  – gap between symbol-end and next symbol-start
+                           #      that marks a letter boundary
+WORD_GAP         = 0.70   # s  – same gap threshold that marks a word boundary
+
+# ── Morse code lookup table ───────────────────────────────────────────────────
+MORSE = {
+    '.-':'A',   '-...':'B',  '-.-.':'C',  '-..':'D',   '.':'E',
+    '..-.':'F', '--.':'G',   '....':'H',  '..':'I',    '.---':'J',
+    '-.-':'K',  '.-..':'L',  '--':'M',    '-.':'N',    '---':'O',
+    '.--.':'P', '--.-':'Q',  '.-.':'R',   '...':'S',   '-':'T',
+    '..-':'U',  '...-':'V',  '.--':'W',   '-..-':'X',  '-.--':'Y',
+    '--..':'Z',
+    '-----':'0', '.----':'1', '..---':'2', '...--':'3', '....-':'4',
+    '.....':'5', '-....':'6', '--...':'7', '---..':'8', '----.':'9',
+    '.-.-.-':'.', '--..--':',', '..--..':'?', '-.--.-':')',
+    '-.--.':'(',  '---...':':', '-.-.-.':';', '.-...':'&',
+    '.----.': "'", '-....-':'-',
+}
+
+
+def load_data(filepath):
+    """Load the CSV and return (times, dot_signal, dash_signal) as numpy arrays."""
+    times, dots, dashes = [], [], []
+    with open(filepath) as fh:
+        for line in fh:
+            cols = line.strip().split('\t')
+            if len(cols) < 14:
+                continue
+            try:
+                times.append(float(cols[13]))
+                dots.append(abs(float(cols[1])))   # absolute value – spikes go both ways
+                dashes.append(abs(float(cols[4])))
+            except ValueError:
+                continue
+    return np.array(times), np.array(dots), np.array(dashes)
+
+
+def detect_bursts(signal, times, threshold):
+    """
+    Return a list of (start_idx, end_idx) index pairs for every contiguous
+    region where signal > threshold.
+    """
+    above = signal > threshold
+    bursts, in_burst, start = [], False, None
+    for i, a in enumerate(above):
+        if a and not in_burst:
+            in_burst, start = True, i
+        elif not a and in_burst:
+            in_burst = False
+            bursts.append((start, i - 1))
+    if in_burst:
+        bursts.append((start, len(above) - 1))
+    return bursts
+
+
+def merge_bursts(bursts, times, gap_seconds):
+    """
+    Merge burst index-pairs that are separated by less than gap_seconds.
+    Returns list of (start_idx, end_idx).
+    """
+    if not bursts:
+        return []
+    merged = [list(bursts[0])]
+    for b in bursts[1:]:
+        gap = times[b[0]] - times[merged[-1][1]]
+        if gap < gap_seconds:
+            merged[-1][1] = b[1]   # extend previous burst
+        else:
+            merged.append(list(b))
+    return [tuple(m) for m in merged]
+
+
+def bursts_to_symbols(burst_idx_list, signal, times, label, t0, min_dur):
+    """
+    Convert index-pair bursts to symbol dicts with timing and mean amplitude.
+    Filters out bursts shorter than min_dur seconds.
+    """
+    symbols = []
+    for s_idx, e_idx in burst_idx_list:
+        start = times[s_idx] - t0
+        end   = times[e_idx] - t0
+        if (end - start) < min_dur:
+            continue
+        symbols.append({
+            'start':    start,
+            'end':      end,
+            'label':    label,
+            'mean_amp': signal[s_idx:e_idx + 1].mean(),
+        })
+    return symbols
+
+
+def resolve_overlaps(dot_symbols, dash_symbols):
+    """
+    Merge dot and dash symbol lists, resolving temporal overlaps by keeping
+    whichever symbol has the higher mean amplitude in the shared window.
+    """
+    all_syms = sorted(dot_symbols + dash_symbols, key=lambda x: x['start'])
+    resolved = []
+    for sym in all_syms:
+        if resolved:
+            prev = resolved[-1]
+            if sym['start'] < prev['end']:          # overlap detected
+                if sym['mean_amp'] > prev['mean_amp']:
+                    resolved[-1] = sym              # new symbol wins
+                # else keep existing symbol
+            else:
+                resolved.append(sym)
+        else:
+            resolved.append(sym)
+    return resolved
+
+
+def group_into_letters(symbols, letter_gap, word_gap):
+    """
+    Group an ordered list of symbols into letters (and mark word boundaries).
+    Returns list of {'sequence': str, 'word_break': bool}.
+    """
+    if not symbols:
+        return []
+
+    groups     = [[symbols[0]]]
+    word_flags = [False]            # True = this group starts a new word
+
+    for i in range(1, len(symbols)):
+        gap = symbols[i]['start'] - symbols[i - 1]['end']
+        if gap >= letter_gap:
+            groups.append([symbols[i]])
+            word_flags.append(gap >= word_gap)
+        else:
+            groups[-1].append(symbols[i])
+
+    result = []
+    for group, is_word in zip(groups, word_flags):
+        seq = ''.join('.' if s['label'] == 'dot' else '-' for s in group)
+        result.append({'sequence': seq, 'word_break': is_word})
+    return result
+
+
+def decode_morse(letter_groups):
+    """Translate letter-group dicts to decoded text and a summary string."""
+    text  = ''
+    lines = []
+    for i, lg in enumerate(letter_groups):
+        seq  = lg['sequence']
+        char = MORSE.get(seq, f'?[{seq}]')
+        if lg['word_break'] and i > 0:
+            text += ' '
+        text += char
+        prefix = '[WORD] ' if (lg['word_break'] and i > 0) else '       '
+        lines.append(f"  {prefix}{seq:12s}→  {char}")
+    return text, lines
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main(filepath):
+    print(f"Loading data from: {filepath}")
+    times, dot_sig, dash_sig = load_data(filepath)
+    t0       = times[0]
+    duration = times[-1] - t0
+    sr       = len(times) / duration
+    print(f"  {len(times)} samples  |  {duration:.2f}s  |  ~{sr:.0f} Hz sample rate\n")
+
+    # ── Step 1: detect raw bursts ──────────────────────────────────────────
+    dot_raw  = detect_bursts(dot_sig,  times, THRESHOLD)
+    dash_raw = detect_bursts(dash_sig, times, THRESHOLD)
+
+    # ── Step 2: merge nearby burst fragments (anti-ringing / noise) ───────
+    dot_merged  = merge_bursts(dot_raw,  times, MERGE_GAP)
+    dash_merged = merge_bursts(dash_raw, times, MERGE_GAP)
+
+    # ── Step 3: convert to timed symbol dicts, filter short noise ─────────
+    dot_syms  = bursts_to_symbols(dot_merged,  dot_sig,  times, 'dot',  t0, MIN_BURST_DUR)
+    dash_syms = bursts_to_symbols(dash_merged, dash_sig, times, 'dash', t0, MIN_BURST_DUR)
+
+    print(f"Detected bursts (after merge + noise filter):")
+    print(f"  Dot  channel: {len(dot_syms)} symbol(s)")
+    print(f"  Dash channel: {len(dash_syms)} symbol(s)\n")
+
+    # ── Step 4: resolve channel overlaps by amplitude ─────────────────────
+    symbols = resolve_overlaps(dot_syms, dash_syms)
+    print(f"Symbols after overlap resolution: {len(symbols)}")
+    print(f"  {'Start':>6}s  {'End':>6}s  {'Dur':>5}s  Channel")
+    for s in symbols:
+        print(f"  {s['start']:6.3f}   {s['end']:6.3f}   {s['end']-s['start']:5.3f}   {s['label']}")
+    print()
+
+    # ── Step 5: group into letters / words ────────────────────────────────
+    letter_groups = group_into_letters(symbols, LETTER_GAP, WORD_GAP)
+
+    # ── Step 6: decode morse ──────────────────────────────────────────────
+    text, lines = decode_morse(letter_groups)
+
+    print("Morse code decoding:")
+    for line in lines:
+        print(line)
+    print()
+    print("═" * 50)
+    print(f"  Decoded message:  {text}")
+    print("═" * 50)
+    return text
+
+
+if __name__ == '__main__':
+    csv_path = (sys.argv[1] if len(sys.argv) > 1
+                else '/mnt/user-data/uploads/BrainFlow-RAW_2026-03-07_16-13-26_6.csv')
+    main(csv_path)
